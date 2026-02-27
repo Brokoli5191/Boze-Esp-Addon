@@ -7,6 +7,7 @@ import dev.boze.api.option.ToggleOption;
 import dev.boze.api.render.Billboard;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.entity.Entity;
@@ -86,11 +87,12 @@ public class ImageEspModule extends AddonModule {
             int w = size[0];
             int h = size[1];
 
+            // 1.21.6+: drawTexture(RenderPipeline, Identifier, x, y, u, v, width, height, texW, texH)
             event.context.drawTexture(
-                net.minecraft.client.gui.DrawContext::drawTexture,
+                RenderPipelines.GUI_TEXTURED,
                 texture,
                 -w / 2, -h,
-                0, 0,
+                0f, 0f,
                 w, h,
                 w, h
             );
