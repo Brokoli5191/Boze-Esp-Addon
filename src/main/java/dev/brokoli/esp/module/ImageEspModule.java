@@ -47,7 +47,11 @@ public class ImageEspModule extends AddonModule {
     public ImageEspModule() {
         super("ImageESP",
             "Renders PNG images from .minecraft/esp-images/ as ESP overlays above entities.");
-        addOptions(targetOnly, playersOnly, showOnMobs, alpha);
+        // AddonModule has no addOptions() - add directly to the options list
+        options.add(targetOnly);
+        options.add(playersOnly);
+        options.add(showOnMobs);
+        options.add(alpha);
     }
 
     @EventHandler
@@ -56,8 +60,6 @@ public class ImageEspModule extends AddonModule {
         if (mc.world == null || mc.player == null) return;
 
         Entity crosshairTarget = mc.targetedEntity;
-
-        // Get a VertexConsumerProvider.Immediate from the render layer
         VertexConsumerProvider.Immediate vcp = mc.getBufferBuilders().getEntityVertexConsumers();
 
         for (Entity entity : mc.world.getEntities()) {
@@ -75,7 +77,7 @@ public class ImageEspModule extends AddonModule {
             if (texture == null) texture = resolveTexture(DEFAULT_IMAGE);
             if (texture == null) continue;
 
-            renderBillboard(event, vcp, entity, texture, mc);
+            renderBillboard(event, vcp, entity, texture);
         }
 
         vcp.draw();
@@ -128,9 +130,19 @@ public class ImageEspModule extends AddonModule {
     }
 
     private void renderBillboard(EventWorldRender event, VertexConsumerProvider.Immediate vcp,
-                                 Entity entity, Identifier texture, MinecraftClient mc) {
-        // Use camera position from the event's camera object
-        Vec3d cam  = event.camera.getPos();
+                                 Entity entity, Identifier texture) {
+        // Camera position: use getPos() on the focused entity as fallback for 1.21.11
+        Vec3d cam = new Vec3d(
+            event.camera.getBlockPos().getX() + 0.5,
+            event.camera.getBlockPos().getY() + 0.5,
+            event.camera.getBlockPos().getZ() + 0.5
+        );
+
+        // Try to get exact camera sub-block position via getFocusedEntity
+        if (event.camera.getFocusedEntity() != null) {
+            cam = event.camera.getFocusedEntity().getEyePos();
+        }
+
         Vec3d epos = entity.getLerpedPos(event.tickDelta);
 
         float dx = (float)(epos.x - cam.x);
@@ -146,7 +158,8 @@ public class ImageEspModule extends AddonModule {
         event.matrices.multiply(event.camera.getRotation());
         event.matrices.scale(scale, scale, scale);
 
-        var consumer = vcp.getBuffer(RenderLayer.getEntityTranslucent(texture));
+        // 1.21.11: RenderLayer.entityTranslucent() (static factory, no 'get' prefix)
+        var consumer = vcp.getBuffer(RenderLayer.entityTranslucent(texture));
         var entry    = event.matrices.peek();
         int light = 0xF000F0, overlay = 0;
 
