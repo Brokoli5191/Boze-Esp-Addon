@@ -2,15 +2,13 @@ package dev.brokoli.esp.module;
 
 import dev.boze.api.addon.AddonModule;
 import dev.boze.api.event.EventWorldRender;
-import dev.boze.api.option.BooleanOption;
 import dev.boze.api.option.SliderOption;
+import dev.boze.api.option.ToggleOption;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.render.*;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -27,13 +25,13 @@ import java.util.Map;
 
 public class ImageEspModule extends AddonModule {
 
-    private final BooleanOption targetOnly = new BooleanOption(this, "TargetOnly",
+    private final ToggleOption targetOnly = new ToggleOption(this, "TargetOnly",
         "Only show when crosshair is aimed at entity", false);
 
-    private final BooleanOption playersOnly = new BooleanOption(this, "PlayersOnly",
+    private final ToggleOption playersOnly = new ToggleOption(this, "PlayersOnly",
         "Restrict to player entities only", true);
 
-    private final BooleanOption showOnMobs = new BooleanOption(this, "ShowOnMobs",
+    private final ToggleOption showOnMobs = new ToggleOption(this, "ShowOnMobs",
         "Also show on mobs (requires PlayersOnly off)", false);
 
     private final SliderOption alpha = new SliderOption(this, "Opacity",
@@ -59,23 +57,28 @@ public class ImageEspModule extends AddonModule {
 
         Entity crosshairTarget = mc.targetedEntity;
 
+        // Get a VertexConsumerProvider.Immediate from the render layer
+        VertexConsumerProvider.Immediate vcp = mc.getBufferBuilders().getEntityVertexConsumers();
+
         for (Entity entity : mc.world.getEntities()) {
             if (entity == mc.player) continue;
             if (!(entity instanceof LivingEntity)) continue;
 
             boolean isPlayer = entity instanceof PlayerEntity;
 
-            if (playersOnly.get() && !isPlayer) continue;
-            if (!showOnMobs.get() && !isPlayer) continue;
-            if (targetOnly.get() && entity != crosshairTarget) continue;
+            if (playersOnly.getValue() && !isPlayer) continue;
+            if (!showOnMobs.getValue() && !isPlayer) continue;
+            if (targetOnly.getValue() && entity != crosshairTarget) continue;
 
             String filename = isPlayer ? PLAYER_IMAGE : MOB_IMAGE;
             Identifier texture = resolveTexture(filename);
             if (texture == null) texture = resolveTexture(DEFAULT_IMAGE);
             if (texture == null) continue;
 
-            renderBillboard(event.matrixStack, event.vertexConsumers, entity, texture, mc);
+            renderBillboard(event, vcp, entity, texture, mc);
         }
+
+        vcp.draw();
     }
 
     private Identifier resolveTexture(String filename) {
@@ -124,11 +127,11 @@ public class ImageEspModule extends AddonModule {
         return out;
     }
 
-    private void renderBillboard(MatrixStack matrices, VertexConsumerProvider vcp,
+    private void renderBillboard(EventWorldRender event, VertexConsumerProvider.Immediate vcp,
                                  Entity entity, Identifier texture, MinecraftClient mc) {
-        Vec3d cam  = mc.getEntityRenderDispatcher().camera.getProjectionPos();
-        Vec3d epos = entity.getLerpedPos(
-            mc.getRenderTickCounter().getTickProgress(true));
+        // Use camera position from the event's camera object
+        Vec3d cam  = event.camera.getPos();
+        Vec3d epos = entity.getLerpedPos(event.tickDelta);
 
         float dx = (float)(epos.x - cam.x);
         float dy = (float)(epos.y - cam.y);
@@ -136,15 +139,15 @@ public class ImageEspModule extends AddonModule {
 
         float entityHeight = entity.getHeight();
         float scale = Math.max(0.5f, entityHeight);
-        int a = (int) alpha.get();
+        int a = (int) alpha.getValue().doubleValue();
 
-        matrices.push();
-        matrices.translate(dx, dy + entityHeight + 0.1f, dz);
-        matrices.multiply(mc.getEntityRenderDispatcher().camera.getRotation());
-        matrices.scale(scale, scale, scale);
+        event.matrices.push();
+        event.matrices.translate(dx, dy + entityHeight + 0.1f, dz);
+        event.matrices.multiply(event.camera.getRotation());
+        event.matrices.scale(scale, scale, scale);
 
-        var consumer = vcp.getBuffer(RenderLayer.entityTranslucent(texture));
-        var entry    = matrices.peek();
+        var consumer = vcp.getBuffer(RenderLayer.getEntityTranslucent(texture));
+        var entry    = event.matrices.peek();
         int light = 0xF000F0, overlay = 0;
 
         consumer.vertex(entry, -0.5f, 0.0f, 0f)
@@ -160,7 +163,7 @@ public class ImageEspModule extends AddonModule {
             .color(255, 255, 255, a).texture(0f, 0f)
             .overlay(overlay).light(light).normal(entry, 0, 0, 1);
 
-        matrices.pop();
+        event.matrices.pop();
     }
 
     private static Path getImageDir() {
