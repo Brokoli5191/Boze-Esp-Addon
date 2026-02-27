@@ -47,7 +47,6 @@ public class ImageEspModule extends AddonModule {
     public ImageEspModule() {
         super("ImageESP",
             "Renders PNG images from .minecraft/esp-images/ as ESP overlays above entities.");
-        // AddonModule has no addOptions() - add directly to the options list
         options.add(targetOnly);
         options.add(playersOnly);
         options.add(showOnMobs);
@@ -131,14 +130,11 @@ public class ImageEspModule extends AddonModule {
 
     private void renderBillboard(EventWorldRender event, VertexConsumerProvider.Immediate vcp,
                                  Entity entity, Identifier texture) {
-        // Camera position: use getPos() on the focused entity as fallback for 1.21.11
         Vec3d cam = new Vec3d(
             event.camera.getBlockPos().getX() + 0.5,
             event.camera.getBlockPos().getY() + 0.5,
             event.camera.getBlockPos().getZ() + 0.5
         );
-
-        // Try to get exact camera sub-block position via getFocusedEntity
         if (event.camera.getFocusedEntity() != null) {
             cam = event.camera.getFocusedEntity().getEyePos();
         }
@@ -158,8 +154,8 @@ public class ImageEspModule extends AddonModule {
         event.matrices.multiply(event.camera.getRotation());
         event.matrices.scale(scale, scale, scale);
 
-        // 1.21.11: RenderLayer.entityTranslucent() (static factory, no 'get' prefix)
-        var consumer = vcp.getBuffer(RenderLayer.entityTranslucent(texture));
+        // Yarn 1.21.11: getEntityTranslucent(Identifier texture, boolean affectsOutline)
+        var consumer = vcp.getBuffer(RenderLayer.getEntityTranslucent(texture, false));
         var entry    = event.matrices.peek();
         int light = 0xF000F0, overlay = 0;
 
