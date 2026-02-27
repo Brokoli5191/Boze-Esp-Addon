@@ -1,21 +1,20 @@
 package dev.brokoli.esp;
 
+import dev.boze.api.BozeInstance;
+import dev.boze.api.addon.Addon;
 import dev.boze.api.addon.AddonModule;
-import dev.boze.api.BozeAddon;
 import dev.brokoli.esp.module.ImageEspModule;
 import net.fabricmc.api.ClientModInitializer;
 
-public class EspAddon implements ClientModInitializer, BozeAddon {
+public class EspAddon extends Addon implements ClientModInitializer {
 
-    public static final String MOD_ID = "esp-addon";
-
-    @Override
-    public void onInitializeClient() {
-        // Fabric entrypoint - Boze registration happens via getModules()
+    public EspAddon() {
+        super("ImageESP", "Image ESP Addon", "1.0.0", "Brokoli5191");
     }
 
     @Override
-    public AddonModule[] getModules() {
-        return new AddonModule[]{ new ImageEspModule() };
+    public void onInitializeClient() {
+        this.modules.add(new ImageEspModule());
+        BozeInstance.INSTANCE.registerAddon(this);
     }
 }
