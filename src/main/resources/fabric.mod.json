@@ -3,7 +3,7 @@
   "id": "esp-addon",
   "version": "${version}",
   "name": "Image ESP Addon",
-  "description": "Boze ESP addon with PNG/GIF image overlays per entity, loaded at runtime from .minecraft/esp-images/",
+  "description": "Boze ESP addon with PNG/GIF image overlays per entity, loaded at runtime from esp-images/",
   "authors": ["Brokoli5191"],
   "contact": {},
   "license": "MIT",
@@ -12,8 +12,8 @@
     "client": ["dev.brokoli.esp.EspAddon"]
   },
   "depends": {
-    "fabricloader": ">=0.16.10",
-    "minecraft": "~1.21.4",
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.11",
     "java": ">=21"
   }
 }
