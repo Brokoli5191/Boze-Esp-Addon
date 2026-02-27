@@ -80,14 +80,13 @@ public class ImageEspModule extends AddonModule {
                 .add(0, entity.getHeight() + 0.2, 0);
 
             double s = scale.getValue().doubleValue();
-            if (!Billboard.start(renderPos, event.drawContext, s)) continue;
+            if (!Billboard.start(renderPos, event.context, s)) continue;
 
             int[] size = textureSizeCache.getOrDefault(filename, new int[]{64, 64});
             int w = size[0];
             int h = size[1];
 
-            // drawTexture: (id, x, y, u, v, width, height, texW, texH)
-            event.drawContext.drawTexture(
+            event.context.drawTexture(
                 net.minecraft.client.gui.DrawContext::drawTexture,
                 texture,
                 -w / 2, -h,
@@ -96,7 +95,7 @@ public class ImageEspModule extends AddonModule {
                 w, h
             );
 
-            Billboard.stop(event.drawContext);
+            Billboard.stop(event.context);
         }
     }
 
@@ -144,7 +143,6 @@ public class ImageEspModule extends AddonModule {
                 int r = (argb >> 16) & 0xFF;
                 int g = (argb >>  8) & 0xFF;
                 int b =  argb        & 0xFF;
-                // NativeImage uses ABGR
                 out.setColorArgb(x, y, (a << 24) | (b << 16) | (g << 8) | r);
             }
         }
