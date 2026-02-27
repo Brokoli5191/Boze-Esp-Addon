@@ -21,42 +21,88 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+/**
+ * Renders a PNG from .minecraft/esp-images/ as a billboard above each entity.
+ *
+ * Options are auto-registered by the Option constructor — do NOT call options.add() manually.
+ *
+ * Image selection:
+ *   PlayerImage / MobImage sliders = 1-based index into the sorted file list.
+ *   Index 0 (default) = first file found.
+ */
 public class ImageEspModule extends AddonModule {
 
-    private final ToggleOption targetOnly = new ToggleOption(this, "TargetOnly",
-        "Only show when crosshair is aimed at entity", false);
-
+    // Options — auto-registered, no manual options.add needed
+    private final ToggleOption targetOnly  = new ToggleOption(this, "TargetOnly",
+            "Only show when crosshair targets entity", false);
     private final ToggleOption playersOnly = new ToggleOption(this, "PlayersOnly",
-        "Restrict to player entities only", true);
+            "Restrict to players", true);
+    private final ToggleOption showOnMobs  = new ToggleOption(this, "ShowOnMobs",
+            "Also show on mobs (PlayersOnly must be off)", false);
+    private final SliderOption scale       = new SliderOption(this, "Scale",
+            "Billboard scale", 1.0, 0.1, 5.0, 0.1);
+    private final SliderOption playerImage = new SliderOption(this, "PlayerImage",
+            "Image index for players (1 = first file)", 1.0, 1.0, 64.0, 1.0);
+    private final SliderOption mobImage    = new SliderOption(this, "MobImage",
+            "Image index for mobs (1 = first file)", 1.0, 1.0, 64.0, 1.0);
 
-    private final ToggleOption showOnMobs = new ToggleOption(this, "ShowOnMobs",
-        "Also show on mobs (requires PlayersOnly off)", false);
-
-    private final SliderOption scale = new SliderOption(this, "Scale",
-        "Billboard scale", 1.0, 0.1, 5.0, 0.1);
-
-    private static final Map<String, Identifier> textureCache = new HashMap<>();
-    private static final Map<String, int[]> textureSizeCache = new HashMap<>();
-    private static Path imageDir = null;
-
-    private static final String DEFAULT_IMAGE = "default.png";
-    private static final String PLAYER_IMAGE  = "player.png";
-    private static final String MOB_IMAGE     = "mob.png";
+    // Runtime state
+    private final List<String>           imageFiles    = new ArrayList<>();
+    private final Map<String, Identifier> textureCache = new HashMap<>();
+    private final Map<String, int[]>      sizeCache    = new HashMap<>();
+    private Path imageDir;
 
     public ImageEspModule() {
         super("ImageESP",
-            "Renders PNG images from .minecraft/esp-images/ as ESP overlays above entities.");
-        options.add(targetOnly);
-        options.add(playersOnly);
-        options.add(showOnMobs);
-        options.add(scale);
+                "Renders PNG images from .minecraft/esp-images/ as billboards above entities.");
+        // No options.add — Option() constructor handles registration automatically
+    }
+
+    @Override
+    public void onEnable() {
+        imageDir = MinecraftClient.getInstance().runDirectory.toPath().resolve("esp-images");
+        try {
+            Files.createDirectories(imageDir);
+        } catch (IOException e) {
+            System.err.println("[ImageESP] Could not create esp-images/: " + e.getMessage());
+        }
+        scanImages();
+    }
+
+    @Override
+    public void onDisable() {
+        textureCache.clear();
+        sizeCache.clear();
+        imageFiles.clear();
+    }
+
+    /** Scans esp-images/ for PNG files and populates imageFiles list. */
+    private void scanImages() {
+        imageFiles.clear();
+        if (imageDir == null || !Files.exists(imageDir)) return;
+        try (var stream = Files.list(imageDir)) {
+            stream.filter(p -> p.getFileName().toString().toLowerCase().endsWith(".png"))
+                  .sorted()
+                  .forEach(p -> imageFiles.add(p.getFileName().toString()));
+        } catch (IOException e) {
+            System.err.println("[ImageESP] Error scanning esp-images/: " + e.getMessage());
+        }
+        if (!imageFiles.isEmpty()) {
+            System.out.println("[ImageESP] Found " + imageFiles.size() + " images: " + imageFiles);
+        } else {
+            System.out.println("[ImageESP] No PNG files found in esp-images/");
+        }
     }
 
     @EventHandler
     public void onHudRender(EventHudRender event) {
+        if (imageFiles.isEmpty()) return;
+
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null || mc.player == null) return;
 
@@ -67,75 +113,77 @@ public class ImageEspModule extends AddonModule {
             if (!(entity instanceof LivingEntity)) continue;
 
             boolean isPlayer = entity instanceof PlayerEntity;
-
             if (playersOnly.getValue() && !isPlayer) continue;
             if (!showOnMobs.getValue() && !isPlayer) continue;
             if (targetOnly.getValue() && entity != crosshairTarget) continue;
 
-            String filename = isPlayer ? PLAYER_IMAGE : MOB_IMAGE;
-            Identifier texture = resolveTexture(filename);
-            if (texture == null) texture = resolveTexture(DEFAULT_IMAGE);
+            // Pick file by 1-based index, clamp to available files
+            int rawIndex = isPlayer
+                    ? playerImage.getValue().intValue() - 1
+                    : mobImage.getValue().intValue() - 1;
+            int index = Math.max(0, Math.min(rawIndex, imageFiles.size() - 1));
+            String filename = imageFiles.get(index);
+
+            Identifier texture = loadTexture(filename);
             if (texture == null) continue;
 
             Vec3d renderPos = entity.getLerpedPos(event.tickDelta)
-                .add(0, entity.getHeight() + 0.2, 0);
+                    .add(0, entity.getHeight() + 0.2, 0);
 
             double s = scale.getValue().doubleValue();
             if (!Billboard.start(renderPos, event.context, s)) continue;
 
-            int[] size = textureSizeCache.getOrDefault(filename, new int[]{64, 64});
+            int[] size = sizeCache.getOrDefault(filename, new int[]{64, 64});
             int w = size[0];
             int h = size[1];
 
-            // 1.21.6+: drawTexture(RenderPipeline, Identifier, x, y, u, v, width, height, texW, texH)
             event.context.drawTexture(
-                RenderPipelines.GUI_TEXTURED,
-                texture,
-                -w / 2, -h,
-                0f, 0f,
-                w, h,
-                w, h
+                    RenderPipelines.GUI_TEXTURED,
+                    texture,
+                    -w / 2, -h,
+                    0f, 0f,
+                    w, h,
+                    w, h
             );
 
             Billboard.stop(event.context);
         }
     }
 
-    private Identifier resolveTexture(String filename) {
+    /** Loads and caches a texture from esp-images/. Returns null on failure. */
+    private Identifier loadTexture(String filename) {
         if (textureCache.containsKey(filename)) return textureCache.get(filename);
 
-        Path filePath = getImageDir().resolve(filename);
-        if (!Files.exists(filePath)) {
+        Path file = imageDir.resolve(filename);
+        if (!Files.exists(file)) {
             textureCache.put(filename, null);
             return null;
         }
 
         try {
-            BufferedImage img = ImageIO.read(filePath.toFile());
+            BufferedImage img = ImageIO.read(file.toFile());
             if (img == null) { textureCache.put(filename, null); return null; }
 
-            int w = img.getWidth();
-            int h = img.getHeight();
-            textureSizeCache.put(filename, new int[]{w, h});
+            sizeCache.put(filename, new int[]{img.getWidth(), img.getHeight()});
 
-            NativeImage native_ = bufferedToNative(img);
+            NativeImage native_ = toNativeImage(img);
             NativeImageBackedTexture tex = new NativeImageBackedTexture(
-                () -> "esp-addon:" + filename, native_);
+                    () -> "esp-addon:" + filename, native_);
 
-            String idPath = "entity/" + filename.toLowerCase()
-                .replaceAll("[^a-z0-9_./]", "_");
+            String idPath = "esp/" + filename.toLowerCase().replaceAll("[^a-z0-9_./]", "_");
             Identifier id = Identifier.of("esp-addon", idPath);
             MinecraftClient.getInstance().getTextureManager().registerTexture(id, tex);
             textureCache.put(filename, id);
             return id;
         } catch (IOException e) {
-            System.err.println("[ImageESP] Failed to load: " + filePath);
+            System.err.println("[ImageESP] Failed to load " + filename + ": " + e.getMessage());
             textureCache.put(filename, null);
             return null;
         }
     }
 
-    private NativeImage bufferedToNative(BufferedImage img) {
+    /** Converts BufferedImage (ARGB) to NativeImage (ABGR). */
+    private NativeImage toNativeImage(BufferedImage img) {
         int w = img.getWidth(), h = img.getHeight();
         NativeImage out = new NativeImage(w, h, false);
         for (int x = 0; x < w; x++) {
@@ -149,22 +197,5 @@ public class ImageEspModule extends AddonModule {
             }
         }
         return out;
-    }
-
-    private static Path getImageDir() {
-        if (imageDir == null) {
-            imageDir = MinecraftClient.getInstance().runDirectory.toPath()
-                .resolve("esp-images");
-            try { Files.createDirectories(imageDir); }
-            catch (IOException e) {
-                System.err.println("[ImageESP] Could not create esp-images/: " + e.getMessage());
-            }
-        }
-        return imageDir;
-    }
-
-    public static void clearTextureCache() {
-        textureCache.clear();
-        textureSizeCache.clear();
     }
 }
