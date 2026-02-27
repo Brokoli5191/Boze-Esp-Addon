@@ -1,14 +1,12 @@
 package dev.brokoli.esp.module;
 
 import dev.boze.api.addon.AddonModule;
-import dev.boze.api.event.EventWorldRender;
+import dev.boze.api.event.EventHudRender;
 import dev.boze.api.option.SliderOption;
 import dev.boze.api.option.ToggleOption;
+import dev.boze.api.render.Billboard;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.*;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.entity.Entity;
@@ -16,7 +14,6 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.Util;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -25,7 +22,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Function;
 
 public class ImageEspModule extends AddonModule {
 
@@ -38,12 +34,11 @@ public class ImageEspModule extends AddonModule {
     private final ToggleOption showOnMobs = new ToggleOption(this, "ShowOnMobs",
         "Also show on mobs (requires PlayersOnly off)", false);
 
-    private final SliderOption alpha = new SliderOption(this, "Opacity",
-        "Image opacity 0-255", 220, 0, 255, 1);
+    private final SliderOption scale = new SliderOption(this, "Scale",
+        "Billboard scale", 1.0, 0.1, 5.0, 0.1);
 
     private static final Map<String, Identifier> textureCache = new HashMap<>();
-    // Cache RenderLayer per texture identifier
-    private static final Map<Identifier, RenderLayer> layerCache = new HashMap<>();
+    private static final Map<String, int[]> textureSizeCache = new HashMap<>();
     private static Path imageDir = null;
 
     private static final String DEFAULT_IMAGE = "default.png";
@@ -56,16 +51,15 @@ public class ImageEspModule extends AddonModule {
         options.add(targetOnly);
         options.add(playersOnly);
         options.add(showOnMobs);
-        options.add(alpha);
+        options.add(scale);
     }
 
     @EventHandler
-    public void onWorldRender(EventWorldRender event) {
+    public void onHudRender(EventHudRender event) {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null || mc.player == null) return;
 
         Entity crosshairTarget = mc.targetedEntity;
-        VertexConsumerProvider.Immediate vcp = mc.getBufferBuilders().getEntityVertexConsumers();
 
         for (Entity entity : mc.world.getEntities()) {
             if (entity == mc.player) continue;
@@ -82,31 +76,28 @@ public class ImageEspModule extends AddonModule {
             if (texture == null) texture = resolveTexture(DEFAULT_IMAGE);
             if (texture == null) continue;
 
-            renderBillboard(event, vcp, entity, texture);
+            Vec3d renderPos = entity.getLerpedPos(event.tickDelta)
+                .add(0, entity.getHeight() + 0.2, 0);
+
+            double s = scale.getValue().doubleValue();
+            if (!Billboard.start(renderPos, event.drawContext, s)) continue;
+
+            int[] size = textureSizeCache.getOrDefault(filename, new int[]{64, 64});
+            int w = size[0];
+            int h = size[1];
+
+            // drawTexture: (id, x, y, u, v, width, height, texW, texH)
+            event.drawContext.drawTexture(
+                net.minecraft.client.gui.DrawContext::drawTexture,
+                texture,
+                -w / 2, -h,
+                0, 0,
+                w, h,
+                w, h
+            );
+
+            Billboard.stop(event.drawContext);
         }
-
-        vcp.draw();
-    }
-
-    private static RenderLayer getBillboardLayer(Identifier texture) {
-        return layerCache.computeIfAbsent(texture, tex ->
-            RenderLayer.of(
-                "esp_billboard",
-                VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL,
-                VertexFormat.DrawMode.QUADS,
-                256,
-                true,
-                true,
-                RenderLayer.MultiPhaseParameters.builder()
-                    .program(RenderPhase.ENTITY_TRANSLUCENT_PROGRAM)
-                    .texture(new RenderPhase.Texture(tex, TriState.FALSE, false))
-                    .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
-                    .cull(RenderPhase.DISABLE_CULLING)
-                    .lightmap(RenderPhase.ENABLE_LIGHTMAP)
-                    .overlay(RenderPhase.ENABLE_OVERLAY_COLOR)
-                    .build(true)
-            )
-        );
     }
 
     private Identifier resolveTexture(String filename) {
@@ -121,6 +112,10 @@ public class ImageEspModule extends AddonModule {
         try {
             BufferedImage img = ImageIO.read(filePath.toFile());
             if (img == null) { textureCache.put(filename, null); return null; }
+
+            int w = img.getWidth();
+            int h = img.getHeight();
+            textureSizeCache.put(filename, new int[]{w, h});
 
             NativeImage native_ = bufferedToNative(img);
             NativeImageBackedTexture tex = new NativeImageBackedTexture(
@@ -149,56 +144,11 @@ public class ImageEspModule extends AddonModule {
                 int r = (argb >> 16) & 0xFF;
                 int g = (argb >>  8) & 0xFF;
                 int b =  argb        & 0xFF;
+                // NativeImage uses ABGR
                 out.setColorArgb(x, y, (a << 24) | (b << 16) | (g << 8) | r);
             }
         }
         return out;
-    }
-
-    private void renderBillboard(EventWorldRender event, VertexConsumerProvider.Immediate vcp,
-                                 Entity entity, Identifier texture) {
-        Vec3d cam = new Vec3d(
-            event.camera.getBlockPos().getX() + 0.5,
-            event.camera.getBlockPos().getY() + 0.5,
-            event.camera.getBlockPos().getZ() + 0.5
-        );
-        if (event.camera.getFocusedEntity() != null) {
-            cam = event.camera.getFocusedEntity().getEyePos();
-        }
-
-        Vec3d epos = entity.getLerpedPos(event.tickDelta);
-
-        float dx = (float)(epos.x - cam.x);
-        float dy = (float)(epos.y - cam.y);
-        float dz = (float)(epos.z - cam.z);
-
-        float entityHeight = entity.getHeight();
-        float scale = Math.max(0.5f, entityHeight);
-        int a = (int) alpha.getValue().doubleValue();
-
-        event.matrices.push();
-        event.matrices.translate(dx, dy + entityHeight + 0.1f, dz);
-        event.matrices.multiply(event.camera.getRotation());
-        event.matrices.scale(scale, scale, scale);
-
-        var consumer = vcp.getBuffer(getBillboardLayer(texture));
-        var entry    = event.matrices.peek();
-        int light = 0xF000F0, overlay = 0;
-
-        consumer.vertex(entry, -0.5f, 0.0f, 0f)
-            .color(255, 255, 255, a).texture(0f, 1f)
-            .overlay(overlay).light(light).normal(entry, 0, 0, 1);
-        consumer.vertex(entry,  0.5f, 0.0f, 0f)
-            .color(255, 255, 255, a).texture(1f, 1f)
-            .overlay(overlay).light(light).normal(entry, 0, 0, 1);
-        consumer.vertex(entry,  0.5f, 1.0f, 0f)
-            .color(255, 255, 255, a).texture(1f, 0f)
-            .overlay(overlay).light(light).normal(entry, 0, 0, 1);
-        consumer.vertex(entry, -0.5f, 1.0f, 0f)
-            .color(255, 255, 255, a).texture(0f, 0f)
-            .overlay(overlay).light(light).normal(entry, 0, 0, 1);
-
-        event.matrices.pop();
     }
 
     private static Path getImageDir() {
@@ -215,6 +165,6 @@ public class ImageEspModule extends AddonModule {
 
     public static void clearTextureCache() {
         textureCache.clear();
-        layerCache.clear();
+        textureSizeCache.clear();
     }
 }
