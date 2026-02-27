@@ -7,6 +7,8 @@ import dev.boze.api.option.ToggleOption;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.*;
+import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.RenderPhase;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.entity.Entity;
@@ -14,6 +16,7 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.Util;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -22,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 public class ImageEspModule extends AddonModule {
 
@@ -38,6 +42,8 @@ public class ImageEspModule extends AddonModule {
         "Image opacity 0-255", 220, 0, 255, 1);
 
     private static final Map<String, Identifier> textureCache = new HashMap<>();
+    // Cache RenderLayer per texture identifier
+    private static final Map<Identifier, RenderLayer> layerCache = new HashMap<>();
     private static Path imageDir = null;
 
     private static final String DEFAULT_IMAGE = "default.png";
@@ -80,6 +86,27 @@ public class ImageEspModule extends AddonModule {
         }
 
         vcp.draw();
+    }
+
+    private static RenderLayer getBillboardLayer(Identifier texture) {
+        return layerCache.computeIfAbsent(texture, tex ->
+            RenderLayer.of(
+                "esp_billboard",
+                VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL,
+                VertexFormat.DrawMode.QUADS,
+                256,
+                true,
+                true,
+                RenderLayer.MultiPhaseParameters.builder()
+                    .program(RenderPhase.ENTITY_TRANSLUCENT_PROGRAM)
+                    .texture(new RenderPhase.Texture(tex, TriState.FALSE, false))
+                    .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
+                    .cull(RenderPhase.DISABLE_CULLING)
+                    .lightmap(RenderPhase.ENABLE_LIGHTMAP)
+                    .overlay(RenderPhase.ENABLE_OVERLAY_COLOR)
+                    .build(true)
+            )
+        );
     }
 
     private Identifier resolveTexture(String filename) {
@@ -154,8 +181,7 @@ public class ImageEspModule extends AddonModule {
         event.matrices.multiply(event.camera.getRotation());
         event.matrices.scale(scale, scale, scale);
 
-        // Yarn 1.21.11: getEntityTranslucent(Identifier texture, boolean affectsOutline)
-        var consumer = vcp.getBuffer(RenderLayer.getEntityTranslucent(texture, false));
+        var consumer = vcp.getBuffer(getBillboardLayer(texture));
         var entry    = event.matrices.peek();
         int light = 0xF000F0, overlay = 0;
 
@@ -187,5 +213,8 @@ public class ImageEspModule extends AddonModule {
         return imageDir;
     }
 
-    public static void clearTextureCache() { textureCache.clear(); }
+    public static void clearTextureCache() {
+        textureCache.clear();
+        layerCache.clear();
+    }
 }
